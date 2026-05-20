@@ -1,0 +1,114 @@
+name: Sentitron CampusPulse — CI/CD Verification Pipeline
+
+on:
+  push:
+    branches: ["main", "develop"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  # ============================================================
+  # 1. BACKEND VERIFICATION — Development Verification Mode
+  # ============================================================
+  backend-tests:
+    name: Backend Verification Suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install backend dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-asyncio httpx websockets aiosqlite
+
+      - name: Infrastructure & Health Verification
+        run: python -m pytest tests/infrastructure/ -v --tb=short
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///./test_campuspulse.db"
+
+      - name: Governance & RBAC Verification
+        run: python -m pytest tests/governance/ -v --tb=short
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///./test_campuspulse.db"
+
+      - name: Ingestion & Intelligence Trigger Verification
+        run: python -m pytest tests/ingestion/test_endpoints.py tests/intelligence/ -v --tb=short
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///./test_campuspulse.db"
+
+      - name: Semantic Clustering Verification
+        run: python -m pytest tests/clustering/ -v --tb=short
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///./test_campuspulse.db"
+
+      - name: Security & Abuse Simulation
+        run: python -m pytest tests/security/ -v --tb=short
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///./test_campuspulse.db"
+
+      - name: Reliability & Degradation Verification
+        run: python -m pytest tests/reliability/ -v --tb=short
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///./test_campuspulse.db"
+
+  # ============================================================
+  # 2. FRONTEND BUILD VALIDATION — Pre-Deployment Verification Mode
+  # ============================================================
+  frontend-build:
+    name: Frontend Build Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+        working-directory: frontend
+
+      - name: Next.js build validation
+        run: npm run build
+        working-directory: frontend
+
+  # ============================================================
+  # 3. LOAD SMOKE TEST — Pre-Deployment Verification Mode
+  # ============================================================
+  load-smoke:
+    name: Load & Concurrency Smoke Test
+    runs-on: ubuntu-latest
+    needs: backend-tests  # Only run if backend tests pass
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-asyncio httpx aiosqlite
+
+      - name: Concurrent Ingestion Burst (100 requests)
+        run: python -m pytest tests/ingestion/test_load.py -v --tb=short
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///./test_campuspulse.db"

@@ -1,0 +1,112 @@
+=================================================================
+  SENTITRON CAMPUSPULSE -- TEST USER CREDENTIALS
+  Seeded via: backend/scripts/seed_db_direct.py
+  Database:   backend/campuspulse.db
+=================================================================
+
+=================================================================
+  [ADMIN]  ADMINISTRATOR ACCOUNTS  (8 accounts)
+=================================================================
+USERNAME               EMAIL                                      PASSWORD           DEPT
+-----------------------------------------------------------------
+admin                  admin@campuspulse.edu                      Admin@Secure1      Management
+superadmin             superadmin@campuspulse.edu                 SuperAdmin@2       Management
+director_ops           director.ops@campuspulse.edu               Director@Ops3      Operations
+dean_academic          dean.academic@campuspulse.edu              Dean@Acad4         Academics
+principal_mit          principal@campuspulse.edu                  Principal@5        Management
+cto_sentitron          cto@campuspulse.edu                        CTOAdmin@6         Technology
+provost                provost@campuspulse.edu                    Provost@7          Management
+sys_admin              sysadmin@campuspulse.edu                   SysAdmin@8         IT
+
+=================================================================
+  [MODERATOR]  MODERATOR ACCOUNTS  (8 accounts)
+=================================================================
+USERNAME               EMAIL                                      PASSWORD           DEPT
+-----------------------------------------------------------------
+mod_cse                mod.cse@campuspulse.edu                    Mod_CSE@1          CSE
+mod_ece                mod.ece@campuspulse.edu                    Mod_ECE@2          ECE
+mod_me                 mod.me@campuspulse.edu                     Mod_ME@3           ME
+mod_hostel             mod.hostel@campuspulse.edu                 Mod_Hostel@4       Hostel
+mod_academics          mod.academics@campuspulse.edu              Mod_Acad@5         Academics
+mod_transport          mod.transport@campuspulse.edu              Mod_Trans@6        Transport
+mod_security           mod.security@campuspulse.edu               Mod_Sec@7          Security
+mod_welfare            mod.welfare@campuspulse.edu                Mod_Welfare@8      Student Welfare
+
+=================================================================
+  [USER]  STANDARD USER ACCOUNTS  (8 accounts)
+=================================================================
+USERNAME               EMAIL                                      PASSWORD           DEPT
+-----------------------------------------------------------------
+student_arjun          arjun.kumar@student.campuspulse.edu        Arjun@Student1     CSE
+student_priya          priya.sharma@student.campuspulse.edu       Priya@Student2     ECE
+student_rahul          rahul.verma@student.campuspulse.edu        Rahul@Student3     ME
+student_ananya         ananya.singh@student.campuspulse.edu       Ananya@Stu4        Civil
+faculty_rajesh         rajesh.prof@campuspulse.edu                Rajesh@Fac5        CSE
+faculty_meena          meena.prof@campuspulse.edu                 Meena@Fac6         ECE
+staff_arun             arun.staff@campuspulse.edu                 Arun@Staff7        Administration
+staff_lakshmi          lakshmi.staff@campuspulse.edu              Lakshmi@Stf8       Hostel
+
+=================================================================
+  [GUEST]  GUEST ACCOUNTS  (8 accounts)
+=================================================================
+USERNAME               EMAIL                                      PASSWORD           DEPT
+-----------------------------------------------------------------
+visitor_1              visitor1@external.com                      Visitor@Gst1       External
+visitor_2              visitor2@external.com                      Visitor@Gst2       External
+reporter_john          reporter1@press.com                        Reporter@Gst3      Press
+inspector_gov          inspector1@gov.in                          Inspect@Gst4       Government
+auditor_ext            auditor@audit.org                          Auditor@Gst5       Audit
+parent_kumar           parent.kumar@external.com                  Parent@Gst6        External
+alumni_2022            alumni2022@alumni.campuspulse.edu          Alumni@Gst7        Alumni
+press_media            media@campuspress.com                      Press@Gst8         Media
+
+=================================================================
+  ROLE PERMISSIONS SUMMARY
+=================================================================
+
+  ADMIN        Full access — dashboard, incidents, clusters,
+               analytics, forecasting, monitoring, settings,
+               notifications, reports, audit logs, user mgmt.
+               Routes: ALL
+
+  MODERATOR    Can view all incidents, clusters, analytics,
+               forecasting, notifications, and reports.
+               CANNOT: monitoring, settings, audit logs,
+                       user management.
+
+  USER         Dashboard, own incidents, notifications, reports.
+               CANNOT: clusters, analytics, forecasting,
+                       monitoring, settings, audit logs.
+
+  GUEST        Read-only dashboard + anonymous reporting portal.
+               CANNOT: incidents feed, clusters, analytics,
+                       forecasting, monitoring, settings.
+
+=================================================================
+  API QUICK-REFERENCE
+=================================================================
+
+  Login (get JWT token):
+    POST  http://localhost:8000/api/auth/login
+    Body: {"username": "admin", "password": "Admin@Secure1"}
+    Returns: {"access_token": "eyJ...", "token_type": "bearer"}
+
+  Use token:
+    GET   http://localhost:8000/api/auth/me
+    Header: Authorization: Bearer <token>
+
+  All users (admin only):
+    GET   http://localhost:8000/api/auth/users
+    Header: Authorization: Bearer <admin-token>
+
+  Frontend login page:
+    http://localhost:3000/auth
+
+=================================================================
+  RE-SEED COMMAND  (run from workspace root)
+=================================================================
+
+  python backend/scripts/seed_db_direct.py   <- works offline
+  python backend/scripts/seed_accounts.py    <- requires API
+
+=================================================================

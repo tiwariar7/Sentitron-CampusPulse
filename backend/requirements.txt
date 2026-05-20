@@ -4,3 +4,15 @@ pydantic
 asyncpg
 sqlalchemy
 greenlet
+transformers
+torch
+qdrant-client
+sentence-transformers
+websockets
+python-multipart
+aiokafka
+aiosqlite
+pyjwt
+bcrypt
+passlib
+email-validator
