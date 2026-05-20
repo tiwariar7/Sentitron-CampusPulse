@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, HTTPException, Header
+from fastapi import APIRouter, Depends, Query, HTTPException, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import desc, or_
@@ -8,6 +8,11 @@ from services.auth import get_current_user, get_optional_current_user, RoleCheck
 from pydantic import BaseModel
 import uuid
 from typing import Optional
+
+from ingestion.event_publisher import (
+    publish_complaint_created,
+    publish_complaint_escalated,
+)
 
 router = APIRouter(prefix="/api/incidents", tags=["incidents"])
 
@@ -80,20 +85,45 @@ async def submit_anonymous(
     db.add(db_complaint)
     await db.commit()
     await db.refresh(db_complaint)
-    
+
+    # Publish to Kafka event pipeline (non-blocking)
+    correlation_id = str(uuid.uuid4())
+    await publish_complaint_created(
+        payload={
+            "complaint_id":   db_complaint.complaint_id,
+            "complaint_text": report.description,
+            "category":       report.category,
+            "department":     "Pending AI",
+            "urgency_level":  urgency,
+            "anonymous":      "true",
+            "source":         "Secure Portal",
+        },
+        correlation_id=correlation_id,
+    )
+
     if urgency >= 4:
         severity = "CRITICAL" if urgency == 5 else "HIGH"
         await trigger_notification(
             db=db,
-            title=f"Anonymous High-Urgency Report",
+            title="Anonymous High-Urgency Report",
             message=f"A new anonymous report requires immediate attention in {report.category}.",
             severity=severity,
             category="Security",
-            recommendations={"action": "Dispatch campus security or relevant authority to assess the situation immediately."},
+            recommendations={"action": "Dispatch campus security or relevant authority immediately."},
             entity_id=db_complaint.complaint_id
         )
-    
-    return {"status": "submitted", "id": db_complaint.complaint_id}
+        # Trigger email worker via Kafka
+        await publish_complaint_escalated(
+            payload={
+                "complaint_id":   db_complaint.complaint_id,
+                "department":     "Pending AI",
+                "severity":       severity,
+                "complaint_text": report.description,
+            },
+            correlation_id=correlation_id,
+        )
+
+    return {"status": "submitted", "id": db_complaint.complaint_id, "correlation_id": correlation_id}
 
 @router.post("/report")
 async def submit_report(

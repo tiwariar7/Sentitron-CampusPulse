@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import asyncio
 from aiokafka import AIOKafkaProducer
 
 logger = logging.getLogger(__name__)
@@ -8,20 +9,34 @@ logger = logging.getLogger(__name__)
 class KafkaProducerManager:
     _producer: AIOKafkaProducer = None
     _connection_failed: bool = False
+    _lock: asyncio.Lock = None
     
     @classmethod
     async def get_producer(cls) -> AIOKafkaProducer:
+        if cls._lock is None:
+            cls._lock = asyncio.Lock()
+            
         if cls._connection_failed:
             raise RuntimeError("Kafka connection is marked as offline. Skipping connection attempt.")
             
-        if cls._producer is None:
+        if cls._producer is not None:
+            return cls._producer
+            
+        async with cls._lock:
+            # Double-check after acquiring lock
+            if cls._connection_failed:
+                raise RuntimeError("Kafka connection is marked as offline. Skipping connection attempt.")
+            if cls._producer is not None:
+                return cls._producer
+                
             KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:9092")
             try:
                 # Limit bootstrap timeouts to 2 seconds to avoid blocking the event loop
                 cls._producer = AIOKafkaProducer(
                     bootstrap_servers=KAFKA_BROKER,
                     value_serializer=lambda v: json.dumps(v).encode('utf-8'),
-                    request_timeout_ms=2000,
+                    request_timeout_ms=1000,
+                    bootstrap_timeout_ms=1000,
                     api_version="auto"
                 )
                 await cls._producer.start()

@@ -16,3 +16,9 @@ pyjwt
 bcrypt
 passlib
 email-validator
+aiosmtplib
+slowapi
+redis
+prometheus-fastapi-instrumentator
+opentelemetry-api
+opentelemetry-sdk

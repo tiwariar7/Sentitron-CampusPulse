@@ -9,7 +9,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 @router.get("/")
 async def get_settings(
-    current_user: User = Depends(RoleChecker(["admin", "moderator"])),
+    current_user: User = Depends(RoleChecker(["admin", "moderator", "guest"])),
     db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(select(Setting))

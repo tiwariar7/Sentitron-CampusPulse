@@ -1,0 +1,153 @@
+version: '3.8'
+
+# =============================================================
+# SENTITRON CAMPUSPULSE — PRODUCTION STACK
+# High availability configuration, network isolation,
+# and encrypted credentials loaded externally.
+# =============================================================
+
+networks:
+  frontend_net:
+    driver: bridge
+  backend_net:
+    driver: bridge
+  db_net:
+    driver: bridge
+    internal: true # postgres and qdrant isolated from external network
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: campuspulse-prod-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: campuspulse
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    networks:
+      - db_net
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4096M
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: campuspulse-prod-qdrant
+    restart: always
+    volumes:
+      - qdrant_prod_data:/qdrant/storage
+    networks:
+      - db_net
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4096M
+
+  redis:
+    image: redis:7-alpine
+    container_name: campuspulse-prod-redis
+    restart: always
+    command: redis-server --maxmemory 1gb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_prod_data:/data
+    networks:
+      - backend_net
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: campuspulse-prod-kafka
+    restart: always
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LOG_RETENTION_MS: 604800000 # 7 days
+    volumes:
+      - kafka_prod_data:/var/lib/kafka/data
+    networks:
+      - backend_net
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4096M
+
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    container_name: campuspulse-prod-backend
+    restart: always
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+    env_file:
+      - .env.prod
+    networks:
+      - backend_net
+      - db_net
+      - frontend_net
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2048M
+
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+    container_name: campuspulse-prod-frontend
+    restart: always
+    depends_on:
+      - backend
+    env_file:
+      - .env.prod
+    networks:
+      - frontend_net
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
+
+  nginx:
+    build:
+      context: ../nginx
+      dockerfile: Dockerfile
+    container_name: campuspulse-prod-nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - backend
+      - frontend
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    networks:
+      - frontend_net
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+volumes:
+  postgres_prod_data:
+  qdrant_prod_data:
+  redis_prod_data:
+  kafka_prod_data:

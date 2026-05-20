@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: 'CampusPulse'
+    orgId: 1
+    folder: 'CampusPulse'
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

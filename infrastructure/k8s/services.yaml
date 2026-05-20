@@ -1,0 +1,60 @@
+---
+# Backend ClusterIP
+apiVersion: v1
+kind: Service
+metadata:
+  name: campuspulse-backend
+  namespace: campuspulse
+spec:
+  selector:
+    app: campuspulse-backend
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8000
+      targetPort: 8000
+---
+# Frontend ClusterIP
+apiVersion: v1
+kind: Service
+metadata:
+  name: campuspulse-frontend
+  namespace: campuspulse
+spec:
+  selector:
+    app: campuspulse-frontend
+  ports:
+    - name: http
+      protocol: TCP
+      port: 3000
+      targetPort: 3000
+---
+# Redis ClusterIP
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: campuspulse
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+# Qdrant ClusterIP
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  namespace: campuspulse
+spec:
+  selector:
+    app: qdrant
+  ports:
+    - name: http
+      port: 6333
+      targetPort: 6333
+    - name: grpc
+      port: 6334
+      targetPort: 6334

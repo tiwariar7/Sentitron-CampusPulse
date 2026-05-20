@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
-from sqlalchemy import Column, Integer, String, DateTime, Float, Text, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Float, Text, Boolean, ForeignKey, Index
 import os
 from datetime import datetime, timedelta
 
@@ -23,10 +23,11 @@ class User(Base):
     username = Column(String, unique=True, index=True, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
-    role = Column(String, default="user") # admin, moderator, user, guest
-    department = Column(String, nullable=True) # CSE, Hostel, etc.
+    role = Column(String, default="user")       # admin, moderator, user, guest
+    department = Column(String, nullable=True)    # CSE, Hostel, etc.
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=get_ist_time)
+    refresh_token_hash = Column(String, nullable=True, index=True)  # hashed refresh token (revocable)
 
 class Complaint(Base):
     __tablename__ = "complaints"
@@ -87,6 +88,23 @@ class AuditLog(Base):
     updated_values = Column(Text) # JSON string
 
     user = relationship("User", foreign_keys=[user_id])
+
+
+class EmailAuditLog(Base):
+    """Immutable record of every email send attempt."""
+    __tablename__ = "email_audit_logs"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    to_address    = Column(String, nullable=False)
+    subject       = Column(String, nullable=False)
+    template_name = Column(String, nullable=True)
+    status        = Column(String, nullable=False)  # sent | failed | retrying
+    attempt_count = Column(Integer, default=1)
+    last_error    = Column(Text, nullable=True)
+    complaint_id  = Column(String, nullable=True, index=True)
+    sent_at       = Column(DateTime, nullable=True)
+    created_at    = Column(DateTime, default=get_ist_time)
+
 
 async def get_db():
     async with AsyncSessionLocal() as session:

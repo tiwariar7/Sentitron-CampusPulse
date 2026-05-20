@@ -1,0 +1,52 @@
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'tiwariar279@gmail.com'
+  smtp_auth_username: 'tiwariar279@gmail.com'
+  smtp_auth_password: 'REPLACE_WITH_GMAIL_APP_PASSWORD'
+  smtp_require_tls: true
+
+route:
+  group_by: ['alertname', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'campuspulse-email'
+
+  routes:
+    # Critical alerts — immediate notification
+    - match:
+        severity: critical
+      receiver: 'campuspulse-email'
+      group_wait: 10s
+      repeat_interval: 1h
+
+    # Warning alerts — batched
+    - match:
+        severity: warning
+      receiver: 'campuspulse-email'
+      group_wait: 60s
+      repeat_interval: 6h
+
+receivers:
+  - name: 'campuspulse-email'
+    email_configs:
+      - to: 'tiwariar279@gmail.com'
+        send_resolved: true
+        html: |
+          {{ range .Alerts }}
+          <b>[{{ .Labels.severity | toUpper }}] {{ .Annotations.summary }}</b><br>
+          Service: {{ .Labels.service }}<br>
+          {{ .Annotations.description }}<br>
+          <br>
+          {{ end }}
+        headers:
+          Subject: '[CampusPulse] {{ .GroupLabels.alertname }} — {{ .CommonLabels.severity }}'
+
+inhibit_rules:
+  # Suppress warning if critical fires for same service
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['service']

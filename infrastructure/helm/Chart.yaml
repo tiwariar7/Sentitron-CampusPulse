@@ -1,0 +1,15 @@
+apiVersion: v2
+name: campuspulse
+description: Sentitron CampusPulse — AI Campus Intelligence Platform
+type: application
+version: 2.0.0
+appVersion: "2.0.0"
+keywords:
+  - campuspulse
+  - sentitron
+  - ai
+  - fastapi
+  - nextjs
+maintainers:
+  - name: Sentitron Team
+    email: tiwariar279@gmail.com

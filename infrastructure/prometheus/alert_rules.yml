@@ -1,0 +1,158 @@
+groups:
+
+  # ── API Latency ──────────────────────────────────────────────
+  - name: api_latency
+    rules:
+      - alert: APIHighLatencyP95
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_request_duration_seconds_bucket{job="campuspulse-backend"}[5m])) by (le, handler)
+          ) > 0.5
+        for: 3m
+        labels:
+          severity: warning
+          service: campuspulse-backend
+        annotations:
+          summary: "API P95 latency above 500ms"
+          description: "Handler {{ $labels.handler }} P95 latency is {{ $value | humanizeDuration }}."
+
+      - alert: APIHighLatencyCritical
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_request_duration_seconds_bucket{job="campuspulse-backend"}[5m])) by (le)
+          ) > 2.0
+        for: 2m
+        labels:
+          severity: critical
+          service: campuspulse-backend
+        annotations:
+          summary: "API P99 latency exceeds 2 seconds"
+          description: "Backend P99 latency is {{ $value | humanizeDuration }}. Immediate investigation required."
+
+  # ── Service Availability ────────────────────────────────────
+  - name: availability
+    rules:
+      - alert: BackendDown
+        expr: up{job="campuspulse-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: campuspulse-backend
+        annotations:
+          summary: "CampusPulse backend is DOWN"
+          description: "FastAPI backend has been unreachable for more than 1 minute."
+
+      - alert: KafkaDown
+        expr: up{job="campuspulse-kafka"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: kafka
+        annotations:
+          summary: "Kafka broker is DOWN"
+          description: "Kafka exporter is unreachable — event pipeline may be halted."
+
+      - alert: QdrantDown
+        expr: up{job="qdrant"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          service: qdrant
+        annotations:
+          summary: "Qdrant vector store is DOWN"
+          description: "Semantic clustering is degraded. Fallback mode active."
+
+  # ── Kafka Consumer Lag ──────────────────────────────────────
+  - name: kafka_lag
+    rules:
+      - alert: KafkaConsumerLagHigh
+        expr: kafka_consumergroup_lag_sum{topic=~"complaint.*"} > 500
+        for: 2m
+        labels:
+          severity: warning
+          service: kafka
+        annotations:
+          summary: "Kafka consumer lag is high"
+          description: "Consumer group {{ $labels.consumergroup }} on topic {{ $labels.topic }} has lag {{ $value }}."
+
+      - alert: KafkaConsumerLagCritical
+        expr: kafka_consumergroup_lag_sum{topic=~"complaint.*"} > 2000
+        for: 1m
+        labels:
+          severity: critical
+          service: kafka
+        annotations:
+          summary: "Kafka consumer lag is CRITICAL"
+          description: "Event pipeline is severely backed up. Lag: {{ $value }} messages."
+
+  # ── RBAC & Security ─────────────────────────────────────────
+  - name: security
+    rules:
+      - alert: RBACViolationSpike
+        expr: |
+          rate(http_requests_total{job="campuspulse-backend", status="403"}[5m]) * 60 > 20
+        for: 2m
+        labels:
+          severity: warning
+          service: campuspulse-backend
+        annotations:
+          summary: "High RBAC violation rate detected"
+          description: "More than 20 forbidden requests/min. Possible credential stuffing or privilege escalation attempt."
+
+      - alert: LoginFailureSpike
+        expr: |
+          rate(http_requests_total{job="campuspulse-backend", handler="/api/auth/login", status="401"}[5m]) * 60 > 30
+        for: 1m
+        labels:
+          severity: warning
+          service: campuspulse-backend
+        annotations:
+          summary: "Login failure spike detected"
+          description: "{{ $value | humanize }} failed logins/min. Possible brute-force attack."
+
+  # ── Escalation & Email ──────────────────────────────────────
+  - name: business_metrics
+    rules:
+      - alert: EscalationSpike
+        expr: |
+          rate(campuspulse_escalations_total[5m]) * 60 > 10
+        for: 2m
+        labels:
+          severity: warning
+          service: campuspulse-backend
+        annotations:
+          summary: "Escalation rate spike"
+          description: "More than 10 escalations/min. Campus situation may be deteriorating."
+
+      - alert: EmailWorkerFailures
+        expr: campuspulse_email_failures_total > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: email-worker
+        annotations:
+          summary: "Email worker has failures in DLQ"
+          description: "{{ $value }} emails have failed all retries and reached the DLQ."
+
+  # ── Infrastructure ──────────────────────────────────────────
+  - name: infrastructure
+    rules:
+      - alert: HighMemoryUsage
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          service: host
+        annotations:
+          summary: "Host memory usage above 85%"
+          description: "Current memory usage: {{ $value | humanize }}%."
+
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: host
+        annotations:
+          summary: "Host CPU usage above 80%"
+          description: "Average CPU: {{ $value | humanize }}%."

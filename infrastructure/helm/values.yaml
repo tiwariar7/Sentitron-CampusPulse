@@ -1,0 +1,60 @@
+# =============================================================
+# CAMPUSPULSE HELM VALUES
+# Override these for each environment:
+#   helm upgrade --install campuspulse ./infrastructure/helm \
+#     -f values.yaml -f values.prod.yaml
+# =============================================================
+
+global:
+  environment: production
+  imageRegistry: ghcr.io/your-org
+
+backend:
+  image: campuspulse-backend
+  tag: latest
+  replicas: 2
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: 1000m, memory: 2Gi }
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    cpuTarget: 70
+
+frontend:
+  image: campuspulse-frontend
+  tag: latest
+  replicas: 2
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 1Gi }
+
+ingress:
+  enabled: true
+  host: campuspulse.your-domain.com
+  tls: true
+  className: nginx
+
+redis:
+  enabled: true
+  maxmemory: 256mb
+
+qdrant:
+  enabled: true
+
+kafka:
+  enabled: true
+  partitions: 3
+  replicationFactor: 1
+
+observability:
+  prometheus:
+    enabled: true
+    retention: 15d
+  grafana:
+    enabled: true
+    adminPassword: "change-me-in-prod"
+  loki:
+    enabled: true
+    retention: 720h

@@ -2,10 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import List
+from pydantic import BaseModel
 
 from services.db import get_db, User
 from models.schemas import UserCreate, UserResponse, UserUpdate, LoginRequest, TokenResponse
-from services.auth import hash_password, verify_password, create_access_token, get_current_user, RoleChecker
+from services.auth import (
+    hash_password, verify_password, create_access_token, create_refresh_token,
+    decode_refresh_token, hash_refresh_token, get_current_user, RoleChecker
+)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -66,11 +70,18 @@ async def login(login_data: LoginRequest, db: AsyncSession = Depends(get_db)):
             detail="Inactive user account"
         )
 
-    access_token = create_access_token(data={"sub": user.username})
+    access_token  = create_access_token(data={"sub": user.username})
+    refresh_token = create_refresh_token(data={"sub": user.username})
+
+    # Store hashed refresh token for revocation support
+    user.refresh_token_hash = hash_refresh_token(refresh_token)
+    await db.commit()
+
     return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": user
+        "access_token":  access_token,
+        "refresh_token": refresh_token,
+        "token_type":    "bearer",
+        "user":          user
     }
 
 @router.get("/me", response_model=UserResponse)
@@ -110,3 +121,62 @@ async def update_user(
     await db.commit()
     await db.refresh(user)
     return user
+
+
+# ── Refresh Token Endpoint ────────────────────────────────────
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh_access_token(
+    body: RefreshRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Exchange a valid refresh token for a new access token."""
+    payload = decode_refresh_token(body.refresh_token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token"
+        )
+
+    username = payload.get("sub")
+    stmt     = select(User).where(User.username == username)
+    result   = await db.execute(stmt)
+    user     = result.scalars().first()
+
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+
+    # Validate token has not been revoked
+    if user.refresh_token_hash != hash_refresh_token(body.refresh_token):
+        raise HTTPException(status_code=401, detail="Refresh token has been revoked")
+
+    new_access  = create_access_token(data={"sub": user.username})
+    new_refresh = create_refresh_token(data={"sub": user.username})
+    user.refresh_token_hash = hash_refresh_token(new_refresh)
+    await db.commit()
+
+    return {
+        "access_token":  new_access,
+        "refresh_token": new_refresh,
+        "token_type":    "bearer",
+        "user":          user
+    }
+
+
+# ── Logout Endpoint ───────────────────────────────────────────
+@router.post("/logout")
+async def logout(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Revoke refresh token — forces full re-authentication."""
+    stmt   = select(User).where(User.id == current_user.id)
+    result = await db.execute(stmt)
+    user   = result.scalars().first()
+    if user:
+        user.refresh_token_hash = None
+        await db.commit()
+    return {"status": "logged_out"}

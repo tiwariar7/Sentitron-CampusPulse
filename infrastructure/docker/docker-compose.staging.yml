@@ -1,0 +1,166 @@
+version: '3.8'
+
+# =============================================================
+# SENTITRON CAMPUSPULSE — STAGING STACK
+# Replicated services, stricter resource boundaries.
+# Uses Postgres database as source of truth.
+# =============================================================
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: campuspulse-staging-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: campuspulse_staging_password
+      POSTGRES_DB: campuspulse
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_staging_data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: campuspulse-staging-qdrant
+    restart: always
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_staging_data:/qdrant/storage
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
+
+  redis:
+    image: redis:7-alpine
+    container_name: campuspulse-staging-redis
+    restart: always
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_staging_data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: campuspulse-staging-zookeeper
+    restart: always
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: campuspulse-staging-kafka
+    restart: always
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LOG_RETENTION_MS: 2592000000 # 30 days
+    volumes:
+      - kafka_staging_data:/var/lib/kafka/data
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 2048M
+
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    container_name: campuspulse-staging-backend
+    restart: always
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+    environment:
+      - ENVIRONMENT=staging
+      - DATABASE_URL=postgresql+asyncpg://postgres:campuspulse_staging_password@postgres:5432/campuspulse
+      - REDIS_URL=redis://redis:6379/0
+      - RATE_LIMIT_STORAGE_URL=redis://redis:6379/1
+      - KAFKA_BROKER=kafka:29092
+    ports:
+      - "8000:8000"
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
+
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+    container_name: campuspulse-staging-frontend
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  nginx:
+    build:
+      context: ../nginx
+      dockerfile: Dockerfile
+    container_name: campuspulse-staging-nginx
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+      - frontend
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+volumes:
+  postgres_staging_data:
+  qdrant_staging_data:
+  redis_staging_data:
+  kafka_staging_data:

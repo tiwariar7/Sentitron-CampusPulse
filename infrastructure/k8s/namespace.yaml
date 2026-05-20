@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: campuspulse
+  labels:
+    app.kubernetes.io/name: campuspulse
+    app.kubernetes.io/managed-by: helm

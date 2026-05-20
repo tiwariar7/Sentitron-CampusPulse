@@ -9,7 +9,7 @@ import logging
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.schemas import ComplaintCreate, ComplaintResponse
-from ingestion.kafka_producer import KafkaProducerManager
+from ingestion.event_publisher import publish_complaint_created
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ingestion", tags=["ingestion"])
@@ -22,6 +22,7 @@ async def ingest_mock_complaint(complaint_data: ComplaintCreate):
     """
     complaint_id = complaint_data.complaint_id or f"CMP-{uuid.uuid4().hex[:6].upper()}"
     timestamp = datetime.datetime.utcnow()
+    corr_id = str(uuid.uuid4())
     
     # Construct raw payload dictionary for serialization
     payload = {
@@ -45,16 +46,17 @@ async def ingest_mock_complaint(complaint_data: ComplaintCreate):
     db_id = 0 # Placeholder for queued messages
     
     try:
-        # Publish payload to Kafka using the shared producer
-        producer = await KafkaProducerManager.get_producer()
-        await producer.send_and_wait("complaints", payload)
-        logger.info(f"Published raw complaint {complaint_id} to event stream.")
+        # Publish payload to Kafka using event publisher (named topic and enveloped)
+        published = await publish_complaint_created(payload, correlation_id=corr_id)
+        if not published:
+            raise Exception("Kafka publisher returned False (broker offline or circuit open)")
+        logger.info(f"Published raw complaint {complaint_id} to event stream | corr_id={corr_id}")
     except Exception as e:
         logger.warning(f"Kafka broker unavailable, falling back to direct background processing: {e}")
         try:
             # Inline processing callback to maintain standalone execution capabilities
             from ingestion.kafka_worker import process_raw_message
-            saved_complaint = await process_raw_message(payload)
+            saved_complaint = await process_raw_message(payload, corr_id)
             if saved_complaint:
                 db_id = saved_complaint.id
         except Exception as inner_e:

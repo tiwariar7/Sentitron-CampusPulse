@@ -1,0 +1,265 @@
+version: '3.8'
+
+# =============================================================
+# SENTITRON CAMPUSPULSE — FULL DEVELOPMENT STACK
+# Includes: Postgres, Qdrant, Kafka, Redis, NGINX,
+#           Prometheus, Grafana, Loki, Promtail, Alertmanager
+# Usage: docker-compose -f infrastructure/docker/docker-compose.dev.yml up -d
+# =============================================================
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+
+  # ── Data Layer ──────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: campuspulse-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: campuspulse
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: campuspulse-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    container_name: campuspulse-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    logging: *default-logging
+
+  # ── Kafka Stack ──────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: campuspulse-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+    logging: *default-logging
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: campuspulse-kafka
+    restart: unless-stopped
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+      # Topic retention: 7 days
+      KAFKA_LOG_RETENTION_MS: 604800000
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    logging: *default-logging
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: campuspulse-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command: |
+      "
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic complaint.created    --partitions 3 --replication-factor 1 --config retention.ms=604800000
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic complaint.classified  --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic complaint.clustered   --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic complaint.escalated   --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic notification.created  --partitions 2 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic audit.logged          --partitions 2 --replication-factor 1 --config retention.ms=-1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic analytics.generated   --partitions 1 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic dlq.complaint.created --partitions 1 --replication-factor 1 --config retention.ms=-1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic dlq.email            --partitions 1 --replication-factor 1 --config retention.ms=-1
+      echo 'All Kafka topics provisioned.'
+      "
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    container_name: campuspulse-kafka-exporter
+    restart: unless-stopped
+    depends_on:
+      - kafka
+    ports:
+      - "9308:9308"
+    command: --kafka.server=kafka:29092
+    logging: *default-logging
+
+  # ── Reverse Proxy / API Gateway ─────────────────────────────
+  nginx:
+    build:
+      context: ../nginx
+      dockerfile: Dockerfile
+    container_name: campuspulse-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - kafka
+    volumes:
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    logging: *default-logging
+
+  # ── Observability Stack ──────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.50.0
+    container_name: campuspulse-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--storage.tsdb.retention.time=15d'
+    logging: *default-logging
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: campuspulse-alertmanager
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ../alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    logging: *default-logging
+
+  grafana:
+    image: grafana/grafana:10.3.0
+    container_name: campuspulse-grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: campuspulse_grafana
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: http://localhost:3001
+    volumes:
+      - ../grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+    logging: *default-logging
+
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: campuspulse-loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - ../loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    logging: *default-logging
+
+  promtail:
+    image: grafana/promtail:2.9.4
+    container_name: campuspulse-promtail
+    restart: unless-stopped
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ../promtail/promtail-config.yaml:/etc/promtail/config.yaml:ro
+    command: -config.file=/etc/promtail/config.yaml
+    depends_on:
+      - loki
+    logging: *default-logging
+
+  node-exporter:
+    image: prom/node-exporter:v1.7.0
+    container_name: campuspulse-node-exporter
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    logging: *default-logging
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  redis_data:
+  kafka_data:
+  zookeeper_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+
+networks:
+  default:
+    name: campuspulse-network

@@ -1,0 +1,118 @@
+# =============================================================
+# SENTITRON CAMPUSPULSE — KAFKA TOPIC MANIFEST
+# Source of truth for all Kafka topics in the event pipeline.
+# Apply via kafka-init container in docker-compose.dev.yml.
+# =============================================================
+
+topics:
+  # ── Core Complaint Pipeline ──────────────────────────────────
+  - name: complaint.created
+    partitions: 3
+    replication_factor: 1
+    config:
+      retention.ms: 604800000          # 7 days
+      cleanup.policy: delete
+      compression.type: lz4
+    description: >
+      Raw complaint submission event. Published by the incidents router
+      immediately after DB write. Consumed by the AI classification worker.
+    schema_version: "1.0"
+    producers: [incidents-router]
+    consumers: [kafka-worker, inference-worker]
+
+  - name: complaint.classified
+    partitions: 3
+    replication_factor: 1
+    config:
+      retention.ms: 604800000
+      compression.type: lz4
+    description: >
+      Post-AI-classification event. Published by kafka-worker after
+      classifier_pipeline.classify() completes.
+    schema_version: "1.0"
+    producers: [kafka-worker]
+    consumers: [inference-worker]
+
+  - name: complaint.clustered
+    partitions: 3
+    replication_factor: 1
+    config:
+      retention.ms: 604800000
+    description: >
+      Post-Qdrant-clustering event. Published by inference-worker.
+      Consumed by escalation engine.
+    schema_version: "1.0"
+    producers: [inference-worker]
+    consumers: [kafka-worker (escalation check)]
+
+  - name: complaint.escalated
+    partitions: 3
+    replication_factor: 1
+    config:
+      retention.ms: 2592000000         # 30 days (compliance)
+      compression.type: lz4
+    description: >
+      Escalation trigger event. Published when urgency_level >= 4 or
+      toxicity_score exceeds threshold. Consumed by email-worker.
+    schema_version: "1.0"
+    producers: [kafka-worker]
+    consumers: [email-worker]
+
+  # ── Notification & Audit ─────────────────────────────────────
+  - name: notification.created
+    partitions: 2
+    replication_factor: 1
+    config:
+      retention.ms: 604800000
+    description: >
+      Emitted when a Notification record is created in PostgreSQL.
+      Consumed by email-worker for HIGH/CRITICAL severity notifications.
+    schema_version: "1.0"
+    producers: [notifications-router]
+    consumers: [email-worker]
+
+  - name: audit.logged
+    partitions: 2
+    replication_factor: 1
+    config:
+      retention.ms: -1                 # Infinite retention (compliance)
+      cleanup.policy: delete
+    description: >
+      Immutable audit trail for all admin actions.
+      Consumed by audit-consumer which writes to audit_logs table.
+    schema_version: "1.0"
+    producers: [auth-router, settings-router]
+    consumers: [audit-consumer]
+
+  - name: analytics.generated
+    partitions: 1
+    replication_factor: 1
+    config:
+      retention.ms: 86400000           # 1 day (metrics are ephemeral)
+    description: >
+      Periodic analytics snapshots published by analytics-publisher.
+      Can be consumed by external BI tools or Prometheus exporter.
+    schema_version: "1.0"
+    producers: [analytics-publisher]
+    consumers: [prometheus-exporter]
+
+  # ── Dead-Letter Queues ───────────────────────────────────────
+  - name: dlq.complaint.created
+    partitions: 1
+    replication_factor: 1
+    config:
+      retention.ms: -1                 # Infinite — ops manual review
+    description: >
+      Dead-letter queue for complaint.created events that failed
+      all 3 processing retries.
+    schema_version: "1.0"
+
+  - name: dlq.email
+    partitions: 1
+    replication_factor: 1
+    config:
+      retention.ms: -1
+    description: >
+      Dead-letter queue for email events that could not be delivered
+      after all SMTP retry attempts.
+    schema_version: "1.0"
